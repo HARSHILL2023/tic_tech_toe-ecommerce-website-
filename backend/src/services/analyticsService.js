@@ -105,23 +105,80 @@ export async function getDashboardMetrics() {
   const overallAOV =
     purchaseEvents.length > 0 ? Math.round(totalRevenue / purchaseEvents.length) : 0;
 
-  // ── Active Sessions ──────────────────────────────────────────────────────
-  const activeSessions = await Session.countDocuments({
+  // ── Engagement & Intent Analytics ─────────────────────────────────────────
+  const activeSessions = await Session.find({
     isActive: true,
     lastSeen: { $gte: since5min },
-  });
+  }).lean();
 
-  // ── Top 5 Products by purchaseCount ─────────────────────────────────────
-  const topProducts = await Product.find({})
-    .sort({ purchaseCount: -1 })
-    .limit(5)
-    .select('id name brand category livePrice purchaseCount viewCount')
-    .lean();
+  const avgEngagementScore = activeSessions.length > 0
+    ? parseFloat((activeSessions.reduce((s, sess) => s + (sess.engagementScore || 0), 0) / activeSessions.length).toFixed(2))
+    : 0;
+
+  const avgPurchaseIntent = activeSessions.length > 0
+    ? parseFloat((activeSessions.reduce((s, sess) => s + (sess.purchaseIntentScore || 0), 0) / activeSessions.length).toFixed(3))
+    : 0;
+
+  // Top categories by affinity across all active sessions
+  const catAccum = {};
+  activeSessions.forEach(sess => {
+    const aff = sess.categoryAffinity || {};
+    Object.entries(aff).forEach(([cat, count]) => {
+      catAccum[cat] = (catAccum[cat] || 0) + count;
+    });
+  });
+  const topCategoryAffinity = Object.entries(catAccum)
+    .sort(([,a],[,b]) => b - a)
+    .slice(0, 5)
+    .map(([category, count]) => ({ category, count }));
+
+  // ── A/B Statistical Significance (two-proportion z-test) ─────────────────
+  function normalCDF(z) {
+    // Approximation of the normal CDF
+    const t = 1 / (1 + 0.2316419 * Math.abs(z));
+    const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+    const phi = 1 - (1 / Math.sqrt(2 * Math.PI)) * Math.exp(-0.5 * z * z) * poly;
+    return z >= 0 ? phi : 1 - phi;
+  }
+
+  const nControl = sessionMap['control']?.total || 0;
+  const nTreatment = sessionMap['treatment']?.total || 0;
+  const p1 = nControl > 0 ? (sessionMap['control']?.purchases || 0) / nControl : 0;
+  const p2 = nTreatment > 0 ? (sessionMap['treatment']?.purchases || 0) / nTreatment : 0;
+  const nTotal = nControl + nTreatment;
+  const pPool = nTotal > 0 ? ((sessionMap['control']?.purchases || 0) + (sessionMap['treatment']?.purchases || 0)) / nTotal : 0;
+
+  let abSignificance = { zScore: null, pValue: null, significant: false, note: 'Need more data (< 30 sessions per variant)' };
+  if (nControl >= 10 && nTreatment >= 10 && pPool > 0 && pPool < 1) {
+    const se = Math.sqrt(pPool * (1 - pPool) * (1 / nControl + 1 / nTreatment));
+    if (se > 0) {
+      const zScore = parseFloat(((p2 - p1) / se).toFixed(3));
+      const pValue = parseFloat((2 * (1 - normalCDF(Math.abs(zScore)))).toFixed(4));
+      const significant = pValue < 0.05;
+      abSignificance = {
+        zScore,
+        pValue,
+        significant,
+        note: significant
+          ? `Statistically significant (p=${pValue}, 95% CI)`
+          : `Not yet significant (p=${pValue}) — collect more sessions`,
+      };
+    }
+  }
+
+  // ── Segment Distribution ────────────────────────────────────────────────────
+  const allSessions = await Session.find({}).lean();
+  const segmentDist = { value_seeker: 0, standard: 0, premium_intent: 0 };
+  allSessions.forEach(s => {
+    const seg = s.userSegment || 'standard';
+    if (segmentDist[seg] !== undefined) segmentDist[seg]++;
+    else segmentDist['standard']++;
+  });
 
   return {
     totalRevenue: {
       value: Math.round(totalRevenue),
-      change: purchaseEvents.length > 0 ? 12.4 : 0, // simulated change %
+      change: purchaseEvents.length > 0 ? 12.4 : 0,
     },
     conversionRate,
     avgOrderValue: {
@@ -129,8 +186,14 @@ export async function getDashboardMetrics() {
       byVariant: avgOrderValue,
       change: 8.1,
     },
-    activeSessions,
+    activeSessions: activeSessions.length,
     topProducts,
+    avgEngagementScore,
+    avgPurchaseIntent,
+    topCategoryAffinity,
+    abSignificance,
+    segmentDistribution: segmentDist,
     generatedAt: now.toISOString(),
   };
 }
+

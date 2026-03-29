@@ -82,6 +82,10 @@ export async function fetchDashboardMetrics() {
   return apiFetch(`${BASE_URL}/api/dashboard/metrics`);
 }
 
+export async function fetchFairnessAudit() {
+  return apiFetch(`${BASE_URL}/api/dashboard/fairness`);
+}
+
 // ── 6b. Home Feed (cached, rate-limit safe) ───────────────────────────────────
 export async function fetchHomeFeed() {
   return apiFetch(`${BASE_URL}/api/home-feed`);

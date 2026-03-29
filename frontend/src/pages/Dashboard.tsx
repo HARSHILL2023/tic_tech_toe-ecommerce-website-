@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { Activity, TrendingUp, Trophy, DollarSign, ShoppingCart, Eye, Heart, Search, ShoppingBag, CheckCircle, Package, Store } from "lucide-react";
+import { Activity, TrendingUp, Trophy, DollarSign, ShoppingCart, Eye, Heart, Search, ShoppingBag, CheckCircle, Package, Store, AlertCircle } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts";
-import { connectLiveEvents, fetchDashboardMetrics, fetchMarketplaceHistory } from "@/api";
+import { connectLiveEvents, fetchDashboardMetrics, fetchMarketplaceHistory, fetchFairnessAudit } from "@/api";
 
 interface DashboardMetrics {
   totalRevenue: { value: number; change: number };
@@ -16,6 +16,11 @@ interface DashboardMetrics {
   topQueries: { query: string; count: number }[];
   sourceDistribution?: Record<string, number>;
   recentEvents: { type: string; productName?: string; timestamp: string; city?: string; device?: string }[];
+  avgEngagementScore?: number;
+  avgPurchaseIntent?: number;
+  topCategoryAffinity?: { category: string; count: number }[];
+  abSignificance?: { zScore: number | null; pValue: number | null; significant: boolean; note: string };
+  segmentDistribution?: { value_seeker: number; standard: number; premium_intent: number };
   generatedAt?: string;
 }
 
@@ -43,14 +48,19 @@ export default function Dashboard() {
   const [marketplaceHistory, setMarketplaceHistory] = useState<MktProduct[]>([]);
   const [historyLoading, setHistoryLoading]         = useState(true);
 
+  // Fairness Audit Data
+  const [fairness, setFairness] = useState<any>(null);
+
   const LINE_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#ec4899', '#eab308'];
 
-  // ── Fetch metrics on mount + refresh every 30s ─────────────────────────────
+  // ── Fetch metrics & fairness on mount + refresh every 30s ─────────────────────────────
   useEffect(() => {
-    const load = () =>
+    const load = () => {
       fetchDashboardMetrics()
         .then((data) => { setMetrics(data as DashboardMetrics); setMetricsLoading(false); })
         .catch(() => setMetricsLoading(false));
+      fetchFairnessAudit().then(setFairness).catch(() => {});
+    };
     load();
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
@@ -205,6 +215,64 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* ── Session Engagement KPIs (PS3 real-time behavior tracking) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Engagement Score */}
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">Avg Engagement Score</span>
+            <Activity size={18} className="text-blue-400" />
+          </div>
+          <div className="flex items-end gap-2">
+            <p className="text-2xl font-bold text-card-foreground tabular-nums">
+              {metricsLoading ? "—" : (metrics.avgEngagementScore ?? 0).toFixed(1)}
+            </p>
+            <span className="text-xs text-muted-foreground mb-1">pts / session</span>
+          </div>
+        </div>
+
+        {/* Purchase Intent */}
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">Avg Purchase Intent</span>
+            <TrendingUp size={18} className="text-green-400" />
+          </div>
+          <div className="flex items-end gap-2">
+            <p className="text-2xl font-bold text-card-foreground tabular-nums">
+              {metricsLoading ? "—" : ((metrics.avgPurchaseIntent ?? 0) * 100).toFixed(1)}%
+            </p>
+            <span className="text-xs text-muted-foreground mb-1">probability</span>
+          </div>
+          <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-green-500 rounded-full" 
+              style={{ width: `${Math.min(100, (metrics.avgPurchaseIntent ?? 0) * 100)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Category Affinity */}
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">Top Category Affinity</span>
+            <Heart size={18} className="text-pink-400" />
+          </div>
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {metricsLoading ? (
+              <span className="text-sm text-muted-foreground">—</span>
+            ) : metrics.topCategoryAffinity && metrics.topCategoryAffinity.length > 0 ? (
+              metrics.topCategoryAffinity.slice(0, 3).map((aff, i) => (
+                <span key={i} className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-accent/10 border border-accent/20 text-accent">
+                  {aff.category} <span className="opacity-70">({aff.count})</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-xs text-muted-foreground">Building profiles...</span>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2/3 */}
         <div className="lg:col-span-2 space-y-6">
@@ -238,6 +306,17 @@ export default function Dashboard() {
                 <Bar dataKey="treatment" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} name="Treatment" />
               </BarChart>
             </ResponsiveContainer>
+            
+            {/* Statistical Significance Indicator */}
+            {metrics.abSignificance && (
+              <div className={`mt-2 p-3 border rounded-md text-sm flex items-start gap-2 ${metrics.abSignificance.significant ? 'bg-success/10 border-success/30 text-success' : 'bg-secondary border-border text-muted-foreground'}`}>
+                {metrics.abSignificance.significant ? <CheckCircle size={16} className="mt-0.5 flex-shrink-0" /> : <Activity size={16} className="mt-0.5 flex-shrink-0" />}
+                <div>
+                  <p className="font-semibold">{metrics.abSignificance.significant ? 'Statistically Significant' : 'Collecting Data'}</p>
+                  <p className="text-xs opacity-80 mt-0.5">{metrics.abSignificance.note}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Price History — Live Marketplace Products */}
@@ -428,6 +507,66 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* ── Fairness & Transparency Audit Panel ── */}
+      {fairness && (
+        <div className="rounded-lg border border-border bg-card p-5 space-y-4 col-span-full">
+          <div className="flex items-center gap-2">
+            <CheckCircle size={20} className="text-success" />
+            <h2 className="font-bold text-foreground">Fair Pricing Principles & Audit Statement</h2>
+          </div>
+          <p className="text-sm border-l-2 border-accent pl-3 text-muted-foreground italic">
+            "{fairness.auditNote}"
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-success mb-3">Included Factors (Behavioral)</h3>
+              <ul className="space-y-2">
+                {fairness.pricingFactors?.map((f: any) => (
+                  <li key={f.factor} className="flex items-start gap-2 text-sm">
+                    <CheckCircle size={14} className="text-success mt-0.5" />
+                    <div>
+                      <span className="font-medium text-foreground">{f.factor}:</span> <span className="text-muted-foreground">{f.description}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-destructive mb-3">Excluded Factors (Demographic)</h3>
+              <ul className="space-y-2">
+                {fairness.excludedFactors?.map((f: any) => (
+                  <li key={f.factor} className="flex items-start gap-2 text-sm">
+                    <AlertCircle size={14} className="text-destructive mt-0.5" />
+                    <div>
+                      <span className="font-medium text-foreground">{f.factor}:</span> <span className="text-muted-foreground">{f.reason}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          
+          <div className="mt-4 pt-4 border-t border-border">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">User Segment Distribution (Non-Demographic)</h3>
+            <p className="text-xs text-muted-foreground mb-3">{fairness.segmentBasis}</p>
+            <div className="flex gap-4 p-3 bg-secondary rounded-md">
+              <div className="flex-1 text-center border-r border-border/50">
+                <span className="block text-xl font-bold text-foreground">{fairness.segmentDistribution?.value_seeker || 0}</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Value Seekers</span>
+              </div>
+              <div className="flex-1 text-center border-r border-border/50">
+                <span className="block text-xl font-bold text-foreground">{fairness.segmentDistribution?.standard || 0}</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Standard</span>
+              </div>
+              <div className="flex-1 text-center">
+                <span className="block text-xl font-bold text-foreground">{fairness.segmentDistribution?.premium_intent || 0}</span>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Premium Intent</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

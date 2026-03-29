@@ -28,9 +28,12 @@ router.get('/', async (req, res, next) => {
     let priceData;
     let priceFlash = false;
 
-    // Get session data for A/B variant
+    // Get session data for A/B variant + user segment
     const session = await Session.findOne({ sessionId }).lean();
-    const sessionData = { abVariant: session?.abVariant || 'control' };
+    const sessionData = {
+      abVariant: session?.abVariant || 'control',
+      userSegment: session?.userSegment || 'standard',
+    };
 
     if (cached) {
       const parsedCache = JSON.parse(cached);
@@ -78,6 +81,7 @@ router.get('/', async (req, res, next) => {
       originalPrice: product.mrp,
       reason: priceData.reason,
       discount: priceData.discount,
+      userSegment: priceData.userSegment || sessionData.userSegment,
       lastUpdated: priceData.lastUpdated || new Date().toISOString(),
       priceFlash,
     });

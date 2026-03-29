@@ -1,15 +1,32 @@
 import { redisGetInt } from '../config/redis.js';
 
 /**
+ * Compute user segment from session object.
+ * Uses ONLY non-discriminatory behavioral/commercial signals.
+ * Excluded: gender, caste, religion, city, income bracket.
+ */
+export function computeUserSegment(session = {}) {
+  const eng = session.engagementScore || 0;
+  const intent = session.purchaseIntentScore || 0;
+  const affinity = session.categoryAffinity || {};
+  const electronicsAff = (affinity instanceof Map ? affinity.get('Electronics') : affinity['Electronics']) || 0;
+
+  if (eng > 15 || electronicsAff > 5) return 'premium_intent';
+  if (intent < 0.2 && eng < 5) return 'value_seeker';
+  return 'standard';
+}
+
+/**
  * Dynamic pricing engine.
  * @param {Object} product  - Mongoose product document (plain object)
- * @param {Object} sessionData - { abVariant }
+ * @param {Object} sessionData - { abVariant, userSegment }
  * @param {Number} recentViews - views in last 15 min from Redis
- * @returns {{ price, reason, discount }}
+ * @returns {{ price, reason, discount, userSegment }}
  */
 export function calculate(product, sessionData = {}, recentViews = 0) {
   let price = product.basePrice;
   let reason = 'Standard Price';
+  const segment = sessionData.userSegment || 'standard';
 
   // Rule 1 — Limited Stock
   if (product.stock <= 5) {
@@ -44,6 +61,13 @@ export function calculate(product, sessionData = {}, recentViews = 0) {
     reason = 'Limited Stock';
   }
 
+  // Rule 6 — User Willingness-to-Pay Segment (non-discriminatory behavioral signal)
+  if (segment === 'value_seeker' && sessionData.abVariant !== 'control') {
+    price = price * 0.97; // -3% for low-engagement / price-sensitive users
+    if (reason === 'Standard Price') reason = 'Standard Price';
+  }
+  // premium_intent: no extra markup — we keep price fair
+
   // Floor: never below 70% of MRP; Ceiling: never above 100% MRP
   price = Math.max(price, product.mrp * 0.7);
   price = Math.min(price, product.mrp);
@@ -51,7 +75,7 @@ export function calculate(product, sessionData = {}, recentViews = 0) {
 
   const discount = Math.round(((product.mrp - price) / product.mrp) * 100);
 
-  return { price, reason, discount };
+  return { price, reason, discount, userSegment: segment };
 }
 
 /**
@@ -61,3 +85,4 @@ export async function calculateWithRedis(product, sessionData = {}) {
   const recentViews = await redisGetInt(`views:15m:${product.id}`);
   return calculate(product, sessionData, recentViews);
 }
+
