@@ -1,67 +1,206 @@
 import { useState, useEffect, useMemo } from "react";
-import { Activity, TrendingUp, Trophy, DollarSign, Repeat2 } from "lucide-react";
+import { Activity, TrendingUp, Trophy, DollarSign, ShoppingCart, Eye, Heart, Search, ShoppingBag, CheckCircle, Package, Store } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts";
-import { generateRandomEvent, generatePriceHistory, fetchDashboardMetrics } from "@/api";
+import { connectLiveEvents, fetchDashboardMetrics, fetchMarketplaceHistory } from "@/api";
+
+interface DashboardMetrics {
+  totalRevenue: { value: number; change: number };
+  conversionRate: { overall: number; control: number; treatment: number };
+  avgOrderValue: { value: number; byVariant?: Record<string, number>; change: number };
+  activeSessions: number;
+  pageViews: number;
+  cartAdds: number;
+  wishlistAdds: number;
+  purchases: number;
+  topProducts: { name: string; count: number; source?: string | null; sourceId?: string | null; avgPrice?: number | null }[];
+  topQueries: { query: string; count: number }[];
+  sourceDistribution?: Record<string, number>;
+  recentEvents: { type: string; productName?: string; timestamp: string; city?: string; device?: string }[];
+  generatedAt?: string;
+}
+
+const EMPTY_METRICS: DashboardMetrics = {
+  totalRevenue: { value: 0, change: 0 },
+  conversionRate: { overall: 0, control: 0, treatment: 0 },
+  avgOrderValue: { value: 0, change: 0 },
+  activeSessions: 0,
+  pageViews: 0,
+  cartAdds: 0,
+  wishlistAdds: 0,
+  purchases: 0,
+  topProducts: [],
+  topQueries: [],
+  recentEvents: [],
+};
 
 export default function Dashboard() {
   const [events, setEvents] = useState<{ time: string; text: string }[]>([]);
-  const [metrics, setMetrics] = useState({
-    totalRevenue: { value: 284750, change: 12.4 },
-    conversionRate: { control: 3.2, treatment: 4.7 },
-    avgOrderValue: { value: 2849, change: 8.1 },
-    activeSessions: 178,
-  });
+  const [metrics, setMetrics] = useState<DashboardMetrics>(EMPTY_METRICS);
+  const [metricsLoading, setMetricsLoading] = useState(true);
 
-  const priceHistory = useMemo(() => generatePriceHistory(), []);
-  const lineKeys = useMemo(() => Object.keys(priceHistory[0] || {}).filter((k) => k !== "hour"), [priceHistory]);
-  const lineColors = ["#ff6b00", "#1a1f71", "#00c853", "#ff1744", "#ffab00"];
+  // Marketplace history (real products, deterministic price series)
+  type MktProduct = { id: string; name: string; source: string; livePrice: number; history: { hour: string; price: number }[] };
+  const [marketplaceHistory, setMarketplaceHistory] = useState<MktProduct[]>([]);
+  const [historyLoading, setHistoryLoading]         = useState(true);
 
-  const abData = [
-    { metric: "Conversion Rate", control: 3.2, treatment: 4.7 },
-    { metric: "AOV (₹)", control: 2450, treatment: 2849 },
-    { metric: "Rev/Session (₹)", control: 78.4, treatment: 133.9 },
-  ];
+  const LINE_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#ec4899', '#eab308'];
 
+  // ── Fetch metrics on mount + refresh every 30s ─────────────────────────────
   useEffect(() => {
-    const interval = setInterval(() => {
+    const load = () =>
+      fetchDashboardMetrics()
+        .then((data) => { setMetrics(data as DashboardMetrics); setMetricsLoading(false); })
+        .catch(() => setMetricsLoading(false));
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ── Fetch marketplace price history ───────────────────────────────────────
+  useEffect(() => {
+    setHistoryLoading(true);
+    fetchMarketplaceHistory()
+      .then((data: { products?: MktProduct[] }) => setMarketplaceHistory(data.products || []))
+      .catch(() => setMarketplaceHistory([]))
+      .finally(() => setHistoryLoading(false));
+  }, []);
+
+  // ── Real-time SSE events ───────────────────────────────────────────────────
+  useEffect(() => {
+    const es = connectLiveEvents((event) => {
       setEvents((prev) => [
-        { time: new Date().toLocaleTimeString(), text: generateRandomEvent() },
+        { time: new Date().toLocaleTimeString(), text: event.message },
         ...prev.slice(0, 49),
       ]);
-    }, 3000);
-    return () => clearInterval(interval);
+    });
+    return () => es.close();
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const m = await fetchDashboardMetrics();
-      setMetrics(m);
-    }, 10000);
-    fetchDashboardMetrics().then(setMetrics);
-    return () => clearInterval(interval);
-  }, []);
+  // ── Transform history into Recharts row format ─────────────────────────────
+  const chartData = useMemo(() => {
+    if (!marketplaceHistory.length) return [];
+    const rows = Array.from({ length: 24 }, (_, i) => ({
+      hour: marketplaceHistory[0]?.history?.[i]?.hour || `${i}:00`,
+    })) as Record<string, string | number>[];
+    marketplaceHistory.forEach(product => {
+      product.history.forEach((point, i) => {
+        rows[i][product.name] = point.price;
+      });
+    });
+    return rows;
+  }, [marketplaceHistory]);
+
+  const chartKeys = useMemo(
+    () => marketplaceHistory.map(p => p.name),
+    [marketplaceHistory]
+  );
+
+  // A/B conversion rates (real from DB)
+  const controlCR = metrics.conversionRate?.control ?? 0;
+  const treatmentCR = metrics.conversionRate?.treatment ?? 0;
+  const controlAOVVal = (metrics.avgOrderValue as Record<string, unknown>)?.byVariant
+    ? ((metrics.avgOrderValue as Record<string, unknown>).byVariant as Record<string, number>)?.control ?? metrics.avgOrderValue?.value
+    : metrics.avgOrderValue?.value;
+  const treatmentAOVVal = (metrics.avgOrderValue as Record<string, unknown>)?.byVariant
+    ? ((metrics.avgOrderValue as Record<string, unknown>).byVariant as Record<string, number>)?.treatment ?? metrics.avgOrderValue?.value
+    : metrics.avgOrderValue?.value;
+  const treatmentWins = treatmentCR >= controlCR;
+
+  const abData = [
+    { metric: "Conversion Rate", control: controlCR, treatment: treatmentCR },
+    { metric: "AOV (₹)", control: controlAOVVal, treatment: treatmentAOVVal },
+    { metric: "Rev/Session (₹)", control: Math.round((controlCR * (controlAOVVal ?? 0)) / 100), treatment: Math.round((treatmentCR * (treatmentAOVVal ?? 0)) / 100) },
+  ];
 
   const kpis = [
-    { label: "Total Revenue", value: `₹${metrics.totalRevenue.value.toLocaleString("en-IN")}`, change: `+${metrics.totalRevenue.change}%`, icon: <DollarSign size={20} />, positive: true },
-    { label: "Conversion Rate", value: `${metrics.conversionRate.treatment}%`, change: `+${(metrics.conversionRate.treatment - metrics.conversionRate.control).toFixed(1)}%`, icon: <Repeat2 size={20} />, positive: true },
-    { label: "Avg Order Value", value: `₹${metrics.avgOrderValue.value.toLocaleString("en-IN")}`, change: `+${metrics.avgOrderValue.change}%`, icon: <TrendingUp size={20} />, positive: true },
-    { label: "Active Sessions", value: metrics.activeSessions.toString(), change: "live", icon: <Activity size={20} />, positive: true },
+    {
+      label: "REVENUE FROM TRACKED PURCHASES",
+      value: `₹${(metrics.totalRevenue?.value ?? 0).toLocaleString("en-IN")}`,
+      change: metrics.totalRevenue?.value > 0 ? `+${metrics.totalRevenue?.change ?? 0}%` : "No purchases yet",
+      icon: <DollarSign size={20} className="text-green-400" />,
+    },
+    {
+      label: "CONVERSION FROM TRACKED VIEWS",
+      value: `${(metrics.conversionRate?.overall ?? 0).toFixed(2)}%`,
+      change: `${metrics.purchases} purchases / ${metrics.pageViews} views`,
+      icon: <TrendingUp size={20} className="text-blue-400" />,
+    },
+    {
+      label: "AVG ORDER VALUE",
+      value: metrics.avgOrderValue?.value > 0 ? `₹${(metrics.avgOrderValue?.value ?? 0).toLocaleString("en-IN")}` : "—",
+      change: metrics.purchases > 0 ? `${metrics.purchases} orders` : "No orders yet",
+      icon: <ShoppingBag size={20} className="text-purple-400" />,
+    },
+    {
+      label: "LIVE ACTIVE SESSIONS",
+      value: (metrics.activeSessions ?? 0).toString(),
+      change: "last 5 min",
+      icon: <Activity size={20} className="text-orange-400" />,
+    },
+    {
+      label: "PAGE VIEWS",
+      value: (metrics.pageViews ?? 0).toLocaleString("en-IN"),
+      change: "last 24h",
+      icon: <Eye size={20} className="text-gray-400" />,
+    },
+    {
+      label: "CART ADDS",
+      value: (metrics.cartAdds ?? 0).toLocaleString("en-IN"),
+      change: "last 24h",
+      icon: <ShoppingCart size={20} className="text-yellow-400" />,
+    },
+    {
+      label: "PURCHASES",
+      value: (metrics.purchases ?? 0).toString(),
+      change: "last 24h",
+      icon: <CheckCircle size={20} className="text-green-400" />,
+    },
+    {
+      label: "WISHLIST ADDS",
+      value: (metrics.wishlistAdds ?? 0).toString(),
+      change: "last 24h",
+      icon: <Heart size={20} className="text-pink-400" />,
+    },
   ];
 
   return (
     <div className="container py-6 space-y-6 animate-fade-in">
-      <h1 className="text-2xl font-bold text-foreground">PriceIQ Analytics — Live</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-foreground">PriceIQ Analytics — Live</h1>
+        <span className="text-xs text-muted-foreground">
+          {metricsLoading ? "Loading…" : `Updated ${metrics.generatedAt ? new Date(metrics.generatedAt).toLocaleTimeString() : "just now"}`}
+        </span>
+      </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((k) => (
+      {/* Info banner — real data notice */}
+      <div className="rounded-md border border-accent/20 bg-accent/5 px-4 py-2 text-xs text-accent">
+        📊 Analytics are based on live PriceIQ user events and marketplace product data. &nbsp;·&nbsp; MongoDB Event collection (last 24h)
+      </div>
+
+      {/* KPI cards — 4 cols on large screens */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-4">
+        {kpis.slice(0, 4).map((k) => (
           <div key={k.label} className="rounded-lg border border-border bg-card p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">{k.label}</span>
-              <span className="text-accent">{k.icon}</span>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">{k.label}</span>
+              <span>{k.icon}</span>
             </div>
-            <p className="text-2xl font-bold text-card-foreground">{k.value}</p>
-            <span className={`text-xs font-semibold ${k.positive ? "text-success" : "text-destructive"}`}>{k.change}</span>
+            <p className="text-2xl font-bold text-card-foreground tabular-nums">{metricsLoading ? "—" : k.value}</p>
+            <span className="text-xs text-gray-500">{k.change}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Secondary KPIs */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {kpis.slice(4).map((k) => (
+          <div key={k.label} className="rounded-lg border border-border bg-card p-3 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">{k.label}</span>
+              <span>{k.icon}</span>
+            </div>
+            <p className="text-xl font-bold text-card-foreground tabular-nums">{metricsLoading ? "—" : k.value}</p>
+            <span className="text-xs text-gray-500">{k.change}</span>
           </div>
         ))}
       </div>
@@ -72,19 +211,21 @@ export default function Dashboard() {
           {/* A/B Test */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-foreground">A/B Test Results</h2>
-              <span className="flex items-center gap-1 text-sm font-semibold text-warning"><Trophy size={16} /> Variant B Wins</span>
+              <h2 className="font-bold text-foreground">A/B Test — Dynamic Pricing Results</h2>
+              <span className={`flex items-center gap-1 text-sm font-semibold ${treatmentWins ? "text-warning" : "text-muted-foreground"}`}>
+                <Trophy size={16} /> {treatmentWins ? "Variant B Wins" : "Control Leads"}
+              </span>
             </div>
             <div className="grid grid-cols-2 gap-4 text-center text-sm">
               <div className="rounded-md bg-secondary p-3 space-y-1">
                 <p className="text-muted-foreground">Variant A (Control)</p>
                 <p className="font-medium text-card-foreground">Rule-based pricing</p>
-                <p className="text-muted-foreground">3.2% · ₹2,450 · ₹78.4/sess · 5,200 sess</p>
+                <p className="text-muted-foreground">{controlCR}% CR · ₹{(controlAOVVal ?? 0).toLocaleString("en-IN")}/order</p>
               </div>
               <div className="rounded-md bg-accent/10 border border-accent/30 p-3 space-y-1">
                 <p className="text-accent font-semibold">Variant B (Treatment)</p>
                 <p className="font-medium text-card-foreground">Dynamic pricing</p>
-                <p className="text-card-foreground">4.7% · ₹2,849 · ₹133.9/sess · 5,180 sess</p>
+                <p className="text-card-foreground">{treatmentCR}% CR · ₹{(treatmentAOVVal ?? 0).toLocaleString("en-IN")}/order</p>
               </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
@@ -99,32 +240,185 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
 
-          {/* Price History */}
+          {/* Price History — Live Marketplace Products */}
           <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-            <h2 className="font-bold text-foreground">Price History — Last 24 Hours</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={priceHistory}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="hour" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--card-foreground))" }} />
-                <Legend />
-                {lineKeys.map((key, i) => (
-                  <Line key={key} type="monotone" dataKey={key} stroke={lineColors[i % lineColors.length]} strokeWidth={2} dot={false} />
+            <div className="flex items-start justify-between flex-wrap gap-2">
+              <div>
+                <h2 className="font-bold text-foreground">Price History — Last 24 Hours</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Based on live marketplace products</p>
+              </div>
+              {!historyLoading && marketplaceHistory.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {marketplaceHistory.filter(p => p.source === 'amazon').length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-amber-400">
+                      <Package size={10} /> {marketplaceHistory.filter(p => p.source === 'amazon').length} Amazon
+                    </span>
+                  )}
+                  {marketplaceHistory.filter(p => p.source === 'flipkart').length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-blue-400">
+                      <Store size={10} /> {marketplaceHistory.filter(p => p.source === 'flipkart').length} Flipkart
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Loading skeleton */}
+            {historyLoading && (
+              <div className="h-[300px] rounded-lg bg-secondary/50 animate-pulse flex items-center justify-center">
+                <p className="text-xs text-muted-foreground">Loading marketplace price data…</p>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!historyLoading && chartData.length === 0 && (
+              <div className="h-[300px] rounded-lg bg-secondary/50 flex flex-col items-center justify-center gap-3">
+                <Activity size={32} className="text-muted-foreground/30" />
+                <p className="text-sm font-semibold text-muted-foreground">No marketplace price data available</p>
+                <p className="text-xs text-muted-foreground/60">Price history will appear when marketplace products are loaded</p>
+              </div>
+            )}
+
+            {/* Chart */}
+            {!historyLoading && chartData.length > 0 && (
+              <>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="hour" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                      interval={5} tickFormatter={(v: string) => v} />
+                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                      tickFormatter={(v: number) => `₹${(v/1000).toFixed(0)}k`} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, color: "hsl(var(--card-foreground))" }}
+                      formatter={(value: number) => [`₹${value.toLocaleString('en-IN')}`, '']}
+                    />
+                    <Legend />
+                    {chartKeys.map((key, i) => (
+                      <Line key={key} type="monotone" dataKey={key} stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                        strokeWidth={2} dot={false} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+                {/* Source legend chips under chart */}
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {marketplaceHistory.map((p, i) => (
+                    <div key={p.id} className="flex items-center gap-1.5">
+                      <span className="inline-block h-2 w-4 rounded-full flex-shrink-0" style={{ backgroundColor: LINE_COLORS[i % LINE_COLORS.length] }} />
+                      <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">{p.name}</span>
+                      {p.source === 'amazon'   && <Package size={9} className="text-amber-400 flex-shrink-0" />}
+                      {p.source === 'flipkart' && <Store   size={9} className="text-blue-400 flex-shrink-0"  />}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Top Products — from real MongoDB aggregates */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+            <h2 className="font-bold text-foreground">Top Clicked / Purchased Products</h2>
+            <p className="text-xs text-muted-foreground">From real MongoDB cart &amp; purchase event aggregates</p>
+            {!metricsLoading && metrics.topProducts && metrics.topProducts.length > 0 ? (
+              <div className="space-y-2">
+                {metrics.topProducts.map((p, i) => (
+                  <div key={i} className="flex items-center justify-between rounded-md bg-secondary px-3 py-2 text-sm gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {p.source === 'amazon' && (
+                        <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 flex-shrink-0">
+                          <Package size={7} /> Amazon
+                        </span>
+                      )}
+                      {p.source === 'flipkart' && (
+                        <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30 flex-shrink-0">
+                          <Store size={7} /> Flipkart
+                        </span>
+                      )}
+                      <span className="text-card-foreground truncate">{p.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {p.avgPrice && <span className="text-green-400 text-xs tabular-nums">₹{p.avgPrice.toLocaleString('en-IN')}</span>}
+                      <span className="text-accent font-semibold text-xs">{p.count}×</span>
+                    </div>
+                  </div>
                 ))}
-              </LineChart>
-            </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="rounded-md bg-secondary/50 px-5 py-8 text-center space-y-2">
+                <ShoppingCart size={28} className="mx-auto text-muted-foreground/30" />
+                <p className="text-sm font-semibold text-muted-foreground">No purchases yet</p>
+                <p className="text-xs text-muted-foreground/60">Purchase events will appear here after users complete checkout</p>
+              </div>
+            )}
+          </div>
+
+          {/* Source Distribution — always visible */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+            <h2 className="font-bold text-foreground">Marketplace Source Distribution</h2>
+            <p className="text-xs text-muted-foreground">Breakdown of interactions by product source</p>
+            {metrics.sourceDistribution && Object.keys(metrics.sourceDistribution).length > 0 ? (
+              <div className="flex gap-4 flex-wrap">
+                {Object.entries(metrics.sourceDistribution).map(([src, cnt]) => (
+                  <div key={src} className="flex items-center gap-2 rounded-lg border border-border bg-secondary px-4 py-3">
+                    {src === 'amazon'   && <Package size={16} className="text-amber-400" />}
+                    {src === 'flipkart' && <Store   size={16} className="text-blue-400"  />}
+                    {src === 'local'    && <Eye     size={16} className="text-gray-400"  />}
+                    <div>
+                      <p className="text-sm font-bold text-card-foreground tabular-nums">{(cnt as number).toLocaleString('en-IN')}</p>
+                      <p className="text-[10px] text-muted-foreground capitalize">{src} events</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md bg-secondary/50 px-5 py-8 text-center space-y-2">
+                <Activity size={28} className="mx-auto text-muted-foreground/30" />
+                <p className="text-sm font-semibold text-muted-foreground">No marketplace interaction yet</p>
+                <p className="text-xs text-muted-foreground/60">Amazon and Flipkart event counts will appear after users interact with marketplace products</p>
+              </div>
+            )}
+          </div>
+
+          {/* Top Searched Queries — from real MongoDB search event aggregates */}
+          <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Search size={16} className="text-accent" />
+              <h2 className="font-bold text-foreground">Top Searched Queries</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">From real MongoDB search event aggregates (last 24h)</p>
+            {!metricsLoading && metrics.topQueries && metrics.topQueries.length > 0 ? (
+              <div className="space-y-2">
+                {metrics.topQueries.map((q, i) => (
+                  <div key={i} className="flex items-center justify-between rounded-md bg-secondary px-3 py-2 text-sm">
+                    <span className="flex items-center gap-2 text-card-foreground">
+                      <span className="text-muted-foreground text-xs w-5">#{i + 1}</span>
+                      {q.query}
+                    </span>
+                    <span className="text-accent font-semibold text-xs">{q.count} searches</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md bg-secondary/50 px-5 py-8 text-center space-y-2">
+                <Search size={28} className="mx-auto text-muted-foreground/30" />
+                <p className="text-sm font-semibold text-muted-foreground">No search activity yet</p>
+                <p className="text-xs text-muted-foreground/60">Search queries will appear here as users search the marketplace</p>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Events feed */}
+        {/* Live Events feed */}
         <div className="rounded-lg border border-border bg-card p-5 space-y-3">
           <div className="flex items-center gap-2">
-            <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" /></span>
-            <h2 className="font-bold text-foreground text-sm">Real-time Events</h2>
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
+            </span>
+            <h2 className="font-bold text-foreground text-sm">Real-time Events (Live SSE)</h2>
           </div>
           <div className="space-y-2 max-h-[600px] overflow-y-auto scrollbar-hide">
-            {events.length === 0 && <p className="text-xs text-muted-foreground">Waiting for events...</p>}
+            {events.length === 0 && <p className="text-xs text-muted-foreground">Connecting to live feed…</p>}
             {events.map((e, i) => (
               <div key={i} className="rounded-md bg-secondary px-3 py-2 text-xs animate-fade-in">
                 <span className="text-muted-foreground">{e.time}</span>

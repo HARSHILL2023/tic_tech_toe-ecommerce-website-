@@ -6,6 +6,8 @@ import { ThemeProvider } from "@/contexts/ThemeContext";
 import { CartProvider } from "@/contexts/CartContext";
 import { WishlistProvider } from "@/contexts/WishlistContext";
 import { ProductProvider } from "@/contexts/ProductContext";
+import { AuthProvider } from "@/contexts/AuthContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
 import ScrollToTop from "@/components/ScrollToTop";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
@@ -16,6 +18,9 @@ import Cart from "@/pages/Cart";
 import Wishlist from "@/pages/Wishlist";
 import Dashboard from "@/pages/Dashboard";
 import NotFound from "@/pages/NotFound";
+import SearchResults from "@/pages/SearchResults";
+import Login from "@/pages/Login";
+import Signup from "@/pages/Signup";
 import { useState } from "react";
 
 const queryClient = new QueryClient();
@@ -27,38 +32,49 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <ProductProvider>
-          <CartProvider>
-            <WishlistProvider>
-              <TooltipProvider>
-                <Sonner />
-                <BrowserRouter>
-                  <ScrollToTop />
-                  <div className="flex flex-col min-h-screen">
-                    <Navbar
-                      searchQuery={searchQuery}
-                      onSearchChange={setSearchQuery}
-                      activeCategory={activeCategory}
-                      onCategoryChange={setActiveCategory}
-                    />
-                    <main className="flex-1">
-                      <Routes>
-                        <Route path="/" element={<Home searchQuery={searchQuery} activeCategory={activeCategory} />} />
-                        <Route path="/product/:id" element={<ProductDetail />} />
-                        <Route path="/cart" element={<Cart />} />
-                        <Route path="/wishlist" element={<Wishlist />} />
-                        <Route path="/dashboard" element={<Dashboard />} />
-                        <Route path="*" element={<NotFound />} />
-                      </Routes>
-                    </main>
-                    <Footer />
-                    <ChatAssistant />
-                  </div>
-                </BrowserRouter>
-              </TooltipProvider>
-            </WishlistProvider>
-          </CartProvider>
-        </ProductProvider>
+        <AuthProvider>
+          <ProductProvider>
+            <CartProvider>
+              <WishlistProvider>
+                <TooltipProvider>
+                  <Sonner />
+                  <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                    <ScrollToTop />
+                    <div className="flex flex-col min-h-screen">
+                      <Navbar
+                        searchQuery={searchQuery}
+                        onSearchChange={setSearchQuery}
+                        activeCategory={activeCategory}
+                        onCategoryChange={setActiveCategory}
+                      />
+                      <main className="flex-1">
+                        <Routes>
+                          {/* Public routes */}
+                          <Route path="/" element={<Home searchQuery={searchQuery} activeCategory={activeCategory} onCategoryChange={setActiveCategory} />} />
+                          <Route path="/search" element={<SearchResults />} />
+                          <Route path="/product/:id" element={<ProductDetail />} />
+                          <Route path="/cart" element={<Cart />} />
+                          <Route path="/wishlist" element={<Wishlist />} />
+                          <Route path="/login" element={<Login />} />
+                          <Route path="/signup" element={<Signup />} />
+
+                          {/* Protected routes */}
+                          <Route path="/dashboard" element={
+                            <ProtectedRoute><Dashboard /></ProtectedRoute>
+                          } />
+
+                          <Route path="*" element={<NotFound />} />
+                        </Routes>
+                      </main>
+                      <Footer />
+                      <ChatAssistant />
+                    </div>
+                  </BrowserRouter>
+                </TooltipProvider>
+              </WishlistProvider>
+            </CartProvider>
+          </ProductProvider>
+        </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );

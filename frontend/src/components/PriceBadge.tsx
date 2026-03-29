@@ -1,5 +1,5 @@
 import { Zap, AlertTriangle, GitCompare } from "lucide-react";
-import type { Product } from "@/data/products";
+import type { Product } from "@/contexts/ProductContext";
 
 const config: Record<Product["priceReason"], { icon: React.ReactNode; bg: string }> = {
   "High Demand": { icon: <Zap size={10} />, bg: "bg-accent text-accent-foreground" },

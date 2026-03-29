@@ -1,11 +1,13 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRef } from "react";
-import type { Product } from "@/data/products";
+import type { Product } from "@/contexts/ProductContext";
 import ProductCard from "./ProductCard";
 
 export default function RecommendationRow({ title, products }: { title: string; products: Product[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const scroll = (dir: number) => ref.current?.scrollBy({ left: dir * 300, behavior: "smooth" });
+
+  if (!products || products.length === 0) return null;
 
   return (
     <section className="space-y-3">

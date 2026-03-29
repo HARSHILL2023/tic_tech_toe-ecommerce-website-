@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useState, useCallback } from "react";
-import type { Product } from "@/data/products";
+import type { Product } from "@/contexts/ProductContext";
 import { toast } from "sonner";
 
 interface WishlistContextType {
   items: Product[];
   addToWishlist: (product: Product) => void;
-  removeFromWishlist: (productId: number) => void;
-  isWishlisted: (productId: number) => boolean;
+  removeFromWishlist: (productId: string | number) => void;
+  isWishlisted: (productId: string | number) => boolean;
   toggleWishlist: (product: Product) => void;
   clearWishlist: () => void;
 }
@@ -24,34 +24,47 @@ export const WishlistProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     localStorage.setItem("priceiq-wishlist", JSON.stringify(next));
   };
 
-  const isWishlisted = useCallback((id: number) => items.some((i) => i.id === id), [items]);
+  // Always compare as strings so amz_ IDs and numeric IDs both work
+  const isWishlisted = useCallback(
+    (id: string | number) => items.some((i) => String(i.id) === String(id)),
+    [items]
+  );
 
   const addToWishlist = useCallback((product: Product) => {
     setItems((prev) => {
-      if (prev.some((i) => i.id === product.id)) return prev;
+      if (prev.some((i) => String(i.id) === String(product.id))) return prev;
       const next = [...prev, product];
       localStorage.setItem("priceiq-wishlist", JSON.stringify(next));
-      toast.success(`Added to wishlist`);
+      toast.success("Added to wishlist");
       return next;
     });
   }, []);
 
-  const removeFromWishlist = useCallback((id: number) => {
+  const removeFromWishlist = useCallback((id: string | number) => {
     setItems((prev) => {
-      const next = prev.filter((i) => i.id !== id);
+      const next = prev.filter((i) => String(i.id) !== String(id));
       localStorage.setItem("priceiq-wishlist", JSON.stringify(next));
       toast("Removed from wishlist");
       return next;
     });
   }, []);
 
-  const toggleWishlist = useCallback((product: Product) => {
-    if (items.some((i) => i.id === product.id)) removeFromWishlist(product.id);
-    else addToWishlist(product);
-  }, [items, addToWishlist, removeFromWishlist]);
+  const toggleWishlist = useCallback(
+    (product: Product) => {
+      if (items.some((i) => String(i.id) === String(product.id))) {
+        removeFromWishlist(product.id);
+      } else {
+        addToWishlist(product);
+      }
+    },
+    [items, addToWishlist, removeFromWishlist]
+  );
 
   return (
-    <WishlistContext.Provider value={{ items, addToWishlist, removeFromWishlist, isWishlisted, toggleWishlist, clearWishlist: () => save([]) }}>
+    <WishlistContext.Provider value={{
+      items, addToWishlist, removeFromWishlist, isWishlisted, toggleWishlist,
+      clearWishlist: () => save([]),
+    }}>
       {children}
     </WishlistContext.Provider>
   );

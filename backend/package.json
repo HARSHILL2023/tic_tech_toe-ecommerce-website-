@@ -1,0 +1,29 @@
+{
+  "name": "priceiq-backend",
+  "version": "1.0.0",
+  "description": "PriceIQ Dynamic Pricing E-Commerce Backend API",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "seed": "node src/data/seed.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "groq-sdk": "^1.1.2",
+    "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.3.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
