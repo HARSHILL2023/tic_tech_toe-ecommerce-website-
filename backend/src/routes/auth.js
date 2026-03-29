@@ -1,11 +1,21 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import passport from 'passport';
+import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import User from '../models/User.js';
 
 const router = Router();
 const JWT_SECRET  = process.env.JWT_SECRET || 'priceiq_dev_secret_change_in_production';
 const JWT_EXPIRES = '7d';
+
+const FRONTEND_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://tic-tech-toe-ecommerce-website.vercel.app' 
+  : 'http://localhost:8080';
+
+const CALLBACK_URL = process.env.NODE_ENV === 'production'
+  ? 'https://tic-tech-toe-ecommerce-website.onrender.com/api/auth/google/callback'
+  : '/api/auth/google/callback';
 
 function signToken(user) {
   return jwt.sign(
@@ -18,6 +28,56 @@ function signToken(user) {
 function safeUser(user) {
   return { id: user._id, name: user.name, email: user.email, role: user.role, avatarUrl: user.avatarUrl };
 }
+
+// ── Google Strategy ─────────────────────────────────────────────────────────
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID || 'dummy_client_id_for_dev_boot',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'dummy_client_secret_for_dev_boot',
+    callbackURL: CALLBACK_URL
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    try {
+      const email = profile.emails && profile.emails.length > 0 ? profile.emails[0].value.toLowerCase() : null;
+      if (!email) return done(new Error('No email found from Google profile'), null);
+
+      let user = await User.findOne({ 
+        $or: [{ googleId: profile.id }, { email }]
+      });
+
+      if (!user) {
+        user = await User.create({
+          googleId: profile.id,
+          name: profile.displayName,
+          email: email,
+          avatarUrl: profile.photos && profile.photos.length > 0 ? profile.photos[0].value : null,
+          provider: 'google'
+        });
+      } else if (!user.googleId) {
+        user.googleId = profile.id;
+        user.provider = 'google';
+        if (!user.avatarUrl && profile.photos && profile.photos.length > 0) {
+          user.avatarUrl = profile.photos[0].value;
+        }
+        await user.save();
+      }
+      return done(null, user);
+    } catch (err) {
+      return done(err, null);
+    }
+  }
+));
+
+// ── GET /api/auth/google ──────────────────────────────────────────────────────
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
+
+// ── GET /api/auth/google/callback ─────────────────────────────────────────────
+router.get('/google/callback', 
+  passport.authenticate('google', { failureRedirect: `${FRONTEND_URL}/login?error=GoogleAuthFailed`, session: false }),
+  (req, res) => {
+    const token = signToken(req.user);
+    res.redirect(`${FRONTEND_URL}/auth/callback?token=${token}`);
+  }
+);
 
 // ── POST /api/auth/signup ─────────────────────────────────────────────────────
 router.post('/signup', async (req, res) => {

@@ -21,6 +21,7 @@ import NotFound from "@/pages/NotFound";
 import SearchResults from "@/pages/SearchResults";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
+import AuthCallback from "@/pages/AuthCallback";
 import { useState } from "react";
 
 const queryClient = new QueryClient();
@@ -57,6 +58,7 @@ const App = () => {
                           <Route path="/wishlist" element={<Wishlist />} />
                           <Route path="/login" element={<Login />} />
                           <Route path="/signup" element={<Signup />} />
+                          <Route path="/auth/callback" element={<AuthCallback />} />
 
                           {/* Protected routes */}
                           <Route path="/dashboard" element={

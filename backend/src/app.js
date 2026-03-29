@@ -12,6 +12,7 @@ import chatRouter from './routes/chat.js';
 import imagesRouter from './routes/images.js';
 import searchRouter from './routes/search.js';
 import homeFeedRouter from './routes/homeFeed.js';
+import passport from 'passport';
 import flipkartRouter from './routes/flipkart.js';
 import marketplaceRouter from './routes/marketplace.js';
 import authRouter from './routes/auth.js';
@@ -56,6 +57,7 @@ app.use(
 // ── Body Parsing ─────────────────────────────────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(passport.initialize());
 
 // ── Request Logger ───────────────────────────────────────────────────────────
 app.use(requestLogger);

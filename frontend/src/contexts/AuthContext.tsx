@@ -18,6 +18,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => void;
   refreshMe: () => Promise<void>;
+  loginWithToken: (token: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -92,6 +93,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persist(data.token, data.user);
   };
 
+  // ── loginWithToken (OAuth) ────────────────────────────────────────────────
+  const loginWithToken = useCallback(async (newToken: string) => {
+    // Just temporarily save the token to local storage without user object,
+    // then call refreshMe which fetches the user and persists fully.
+    localStorage.setItem(TOKEN_KEY, newToken);
+    await refreshMe();
+  }, [refreshMe]);
+
   // ── signOut ─────────────────────────────────────────────────────────────────
   const signOut = () => {
     clear();
@@ -102,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, token, isAuthenticated: !!user, authLoading,
-      signUp, signIn, signOut, refreshMe,
+      signUp, signIn, signOut, refreshMe, loginWithToken
     }}>
       {children}
     </AuthContext.Provider>
