@@ -9,11 +9,13 @@ const router = Router();
 const JWT_SECRET  = process.env.JWT_SECRET || 'priceiq_dev_secret_change_in_production';
 const JWT_EXPIRES = '7d';
 
-const FRONTEND_URL = process.env.NODE_ENV === 'production' 
+const isProd = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+
+const FRONTEND_URL = isProd
   ? 'https://tic-tech-toe-ecommerce-website.vercel.app' 
   : 'http://localhost:8080';
 
-const CALLBACK_URL = process.env.NODE_ENV === 'production'
+const CALLBACK_URL = isProd
   ? 'https://tic-tech-toe-ecommerce-website.onrender.com/api/auth/google/callback'
   : '/api/auth/google/callback';
 
