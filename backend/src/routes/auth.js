@@ -33,7 +33,8 @@ function safeUser(user) {
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID || 'dummy_client_id_for_dev_boot',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'dummy_client_secret_for_dev_boot',
-    callbackURL: CALLBACK_URL
+    callbackURL: CALLBACK_URL,
+    proxy: true
   },
   async (accessToken, refreshToken, profile, done) => {
     try {

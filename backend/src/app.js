@@ -19,6 +19,9 @@ import authRouter from './routes/auth.js';
 
 const app = express();
 
+// Trust reverse proxy for HTTPS via X-Forwarded-Proto (Required for Render & Google OAuth)
+app.set('trust proxy', 1);
+
 // ── CORS ────────────────────────────────────────────────────────────────────
 // Parse comma-separated origins from env (supports both CORS_ORIGIN and FRONTEND_URL)
 const allowedOrigins = [
