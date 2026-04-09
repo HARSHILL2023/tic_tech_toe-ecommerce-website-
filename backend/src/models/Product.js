@@ -6,13 +6,17 @@ const productSchema = new mongoose.Schema({
   brand: { type: String, required: true },
   category: {
     type: String,
-    enum: ['Electronics', 'Fashion', 'Home & Kitchen', 'Sports', 'Beauty', 'Books'],
+    enum: [
+      'Electronics', 'Fashion', 'Home & Kitchen', 'Sports', 'Beauty', 'Books',
+      'Gaming', 'Toys', 'Automotive', 'Appliances', 'Furniture', 'Food & Grocery'
+    ],
     required: true,
   },
   mrp: { type: Number, required: true },
   livePrice: { type: Number, required: true },
   basePrice: { type: Number, required: true }, // never changes — pricing engine reference
   stock: { type: Number, required: true },
+  restockDays: { type: Number, default: 7 },
   rating: { type: Number, required: true },
   reviewCount: { type: Number, required: true },
   discount: { type: Number, required: true },

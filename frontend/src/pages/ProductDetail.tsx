@@ -4,9 +4,10 @@ import { useState, useEffect } from "react";
 import { useProducts } from "@/contexts/ProductContext";
 import { useCart } from "@/contexts/CartContext";
 import { useWishlist } from "@/contexts/WishlistContext";
-import { fetchProduct, fetchPrice, fetchRecommendations, trackEvent, fetchProductImages, fetchMarketplaceProduct, type ProductImage } from "@/api";
+import { fetchProduct, fetchPrice, fetchRecommendations, fetchCategoryRecommendations, trackEvent, fetchProductImages, fetchMarketplaceProduct, type ProductImage } from "@/api";
 import type { Product } from "@/contexts/ProductContext";
 import PriceBadge from "@/components/PriceBadge";
+import CountdownBadge from "@/components/CountdownBadge";
 import RecommendationRow from "@/components/RecommendationRow";
 import { toast } from "sonner";
 
@@ -146,15 +147,27 @@ export default function ProductDetail() {
     return () => clearInterval(interval);
   }, [product, livePrice, sessionId]);
 
-  // ── Fetch recommendations (local products only) ───────────────────────────────────
+  // ── Fetch recommendations (Task 8: Marketplace + Local support) ───────────────────
   useEffect(() => {
-    if (!product || typeof product.id === 'string') return;
-    fetchRecommendations(sessionId, product.id as number)
-      .then((data: Product[]) => {
-        setRecommendations(data.slice(0, 10));
-        setTrending(data.filter((p: Product) => p.category === product.category).slice(0, 10));
-      })
-      .catch(() => {});
+    if (!product) return;
+    
+    // For local products, use standard session-based recs
+    if (typeof product.id !== 'string') {
+      fetchRecommendations(sessionId, product.id as number)
+        .then((data: Product[]) => {
+          setRecommendations(data.slice(0, 10));
+          setTrending(data.filter((p: Product) => p.category === product.category).slice(0, 10));
+        })
+        .catch(() => {});
+    } else {
+      // For marketplace products (Amazon/Flipkart), use category-based fallback
+      fetchCategoryRecommendations(product.category)
+        .then((data: Product[]) => {
+          setRecommendations(data.slice(0, 10));
+          setTrending(data.slice(0, 10));
+        })
+        .catch(() => {});
+    }
   }, [product, sessionId]);
 
   const handleAddToCart = () => {
@@ -299,6 +312,7 @@ export default function ProductDetail() {
           </div>
 
           {/* Price */}
+          {product.stock <= 5 && <CountdownBadge stock={product.stock} />}
           <div className={`space-y-3 rounded-lg border bg-card p-4 transition-all duration-500 ${priceFlash ? "border-accent shadow-lg shadow-accent/20" : "border-border"}`}>
             <div className="flex items-baseline gap-3">
               <span className={`text-3xl font-extrabold transition-colors ${priceFlash ? "text-accent" : "text-success"}`}>

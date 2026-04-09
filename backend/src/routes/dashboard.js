@@ -2,8 +2,48 @@ import { Router } from 'express';
 import Event from '../models/Event.js';
 import Session from '../models/Session.js';
 import { getDashboardMetrics } from '../services/analyticsService.js';
+import { redisLRange } from '../config/redis.js';
 
 const router = Router();
+
+// ── GET /api/dashboard/latency ──────────────────────────────────────────────
+router.get('/latency', async (req, res) => {
+  try {
+    const rawLatencies = await redisLRange('perf:latency', 0, -1);
+    const latencies = rawLatencies.map(Number).sort((a, b) => a - b);
+
+    const stats = {
+      count: latencies.length,
+      p50: 0,
+      p99: 0,
+      avg: 0,
+      quality: { ndcg: 0, hitRate: 0 }
+    };
+
+    if (latencies.length > 0) {
+      stats.p50 = latencies[Math.floor(latencies.length * 0.5)];
+      stats.p99 = latencies[Math.floor(latencies.length * 0.99)];
+      stats.avg = Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length);
+    }
+
+    // Try to fetch ML metrics from FastAPI
+    try {
+      const mlUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
+      const mlRes = await fetch(`${mlUrl}/evaluate`, { signal: AbortSignal.timeout(2000) });
+      if (mlRes.ok) {
+        const mlData = await mlRes.json();
+        stats.quality.ndcg = mlData.ndcg_at_10;
+        stats.quality.hitRate = mlData.hit_rate;
+      }
+    } catch (e) {
+      // ml service might be down, ignore
+    }
+
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch latency metrics' });
+  }
+});
 
 // ── GET /api/dashboard/metrics ────────────────────────────────────────────────
 router.get('/metrics', async (req, res) => {

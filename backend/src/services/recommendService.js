@@ -1,14 +1,33 @@
 import Product from '../models/Product.js';
 import Event from '../models/Event.js';
+import Session from '../models/Session.js';
 import { redisLRange, redisGet, redisSet } from '../config/redis.js';
 
 // ── Time-of-day category preferences for cold-start ─────────────────────────
-function getTimeBasedCategories() {
-  const hour = new Date().getHours(); // 0-23
-  if (hour >= 6 && hour < 10) return ['Books', 'Health', 'Sports'];
-  if (hour >= 10 && hour < 14) return ['Electronics', 'Fashion', 'Beauty'];
-  if (hour >= 14 && hour < 20) return ['Electronics', 'Home', 'Gaming'];
-  return ['Books', 'Home', 'Fashion'];
+// ── Behavioral & Contextual Categories for cold-start (PS3 Task 9) ───────────
+function getColdStartCategories(context = {}) {
+  const { device, referral } = context;
+  const hour = new Date().getHours();
+
+  let categories = [];
+
+  // 1. Time-of-day baseline
+  if (hour >= 6 && hour < 10) categories = ['Books', 'Health', 'Sports'];
+  else if (hour >= 10 && hour < 14) categories = ['Electronics', 'Fashion', 'Beauty'];
+  else if (hour >= 14 && hour < 20) categories = ['Electronics', 'Home & Kitchen', 'Gaming'];
+  else categories = ['Books', 'Home & Kitchen', 'Fashion'];
+
+  // 2. Device signals (Mobile users favor quick consumables/lifestyle)
+  if (device === 'Mobile') {
+    categories = [...new Set(['Gaming', 'Fashion', ...categories])];
+  }
+
+  // 3. Referral signals (Tech blogs favor electronics)
+  if (referral && (referral.includes('tech') || referral.includes('gizmodo'))) {
+    categories = ['Electronics', 'Gaming', ...categories];
+  }
+
+  return [...new Set(categories)];
 }
 
 // ── Item-item collaborative filtering via co-view signals ────────────────────
@@ -74,6 +93,51 @@ export async function getRecommendations(sessionId, productId, context = {}) {
   const exclude = new Set([productId]);
   const result = [];
 
+  // ── 0. ML Service: Collaborative / Session recs ──────────────────────────
+  try {
+    const mlUrl = process.env.ML_SERVICE_URL || 'http://localhost:8000';
+    const viewedRaw = (sessionId && sessionId !== 'anonymous') 
+      ? await redisLRange(`viewed:${sessionId}`, 0, 9) 
+      : [];
+    
+    // Map numerical IDs back to MongoDB ObjectIDs for the ML service
+    const viewedProducts = all.filter(p => viewedRaw.map(Number).includes(p.id));
+    const sessionHistory = viewedProducts.map(p => p._id.toString());
+
+    if (sessionHistory.length > 0) {
+      const mlRes = await fetch(`${mlUrl}/recommend/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_history: sessionHistory, top_k: 10 }),
+        signal: AbortSignal.timeout(1500)
+      });
+      if (mlRes.ok) {
+        const { recommendations: recIds } = await mlRes.json();
+        const mlProducts = all.filter(p => recIds.includes(p._id.toString()) && !exclude.has(p.id));
+        mlProducts.forEach(p => {
+          result.push({ ...p, _recReason: 'ml-personalized' });
+          exclude.add(p.id);
+        });
+      }
+    } else if (productId) {
+      // Fallback: recommend by product ID if no session history
+      const mongoId = current?._id.toString();
+      if (mongoId) {
+        const mlRes = await fetch(`${mlUrl}/recommend/${mongoId}?top_k=10`, { signal: AbortSignal.timeout(1000) });
+        if (mlRes.ok) {
+          const { recommendations: recIds } = await mlRes.json();
+          const mlProducts = all.filter(p => recIds.includes(p._id.toString()) && !exclude.has(p.id));
+          mlProducts.forEach(p => {
+            result.push({ ...p, _recReason: 'ml-content' });
+            exclude.add(p.id);
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('ML Service unreachable, falling back to rule-based recs');
+  }
+
   // ── 1. Collaborative filtering: co-viewed products ──────────────────────
   if (productId) {
     const coviewedIds = await getCoviewedProducts(productId);
@@ -121,9 +185,21 @@ export async function getRecommendations(sessionId, productId, context = {}) {
     }
   });
 
-  // ── 5. Contextual cold-start (time-of-day based) ─────────────────────────
+  // ── 5. Contextual cold-start (behavioral signals - PS3 Task 9) ─────────
   if (result.length < 6) {
-    const timeCategories = context.timeCategories || getTimeBasedCategories();
+    let coldStartCtx = context;
+    if (sessionId && sessionId !== 'anonymous' && !coldStartCtx.device) {
+      const session = await Session.findOne({ sessionId }).lean();
+      if (session) {
+        coldStartCtx = { 
+          device: session.deviceType, 
+          referral: session.referralSource,
+          ...coldStartCtx
+        };
+      }
+    }
+
+    const timeCategories = coldStartCtx.timeCategories || getColdStartCategories(coldStartCtx);
     const contextualProducts = all
       .filter(p => !exclude.has(p.id) && timeCategories.includes(p.category))
       .sort((a, b) => b.viewCount - a.viewCount)

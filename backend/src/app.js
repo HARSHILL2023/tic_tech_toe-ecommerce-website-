@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { requestLogger } from './middleware/requestLogger.js';
+import { latencyMiddleware } from './middleware/latencyMiddleware.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import priceRouter from './routes/price.js';
 import trackRouter from './routes/track.js';
@@ -16,6 +17,7 @@ import passport from 'passport';
 import flipkartRouter from './routes/flipkart.js';
 import marketplaceRouter from './routes/marketplace.js';
 import authRouter from './routes/auth.js';
+import predictionRouter from './routes/prediction.js';
 
 const app = express();
 
@@ -62,7 +64,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(passport.initialize());
 
-// ── Request Logger ───────────────────────────────────────────────────────────
+// ── Request Tracking ─────────────────────────────────────────────────────────
+app.use(latencyMiddleware);
 app.use(requestLogger);
 
 // ── Health Check ─────────────────────────────────────────────────────────────
@@ -93,6 +96,7 @@ app.use('/api/home-feed', homeFeedRouter);
 app.use('/api/flipkart', flipkartRouter);
 app.use('/api/marketplace', marketplaceRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/prediction', predictionRouter);
 
 // Alias for price-history chart (mounted on products router)
 // GET /api/price-history → products router handles it

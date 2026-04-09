@@ -16,15 +16,28 @@ export async function getDashboardMetrics() {
     timestamp: { $gte: since24h },
   }).lean();
 
-  let totalRevenue = 0;
-  for (const ev of purchaseEvents) {
-    if (ev.productId) {
-      const product = await Product.findOne({ id: ev.productId }).lean();
-      if (product) {
-        totalRevenue += product.livePrice;
+  const prev24h = new Date(now - 48 * 60 * 60 * 1000);
+  const prevPurchaseEvents = await Event.find({
+    eventType: 'purchase',
+    timestamp: { $gte: prev24h, $lt: since24h },
+  }).lean();
+
+  async function calculateRevenue(events) {
+    let rev = 0;
+    for (const ev of events) {
+      if (ev.productId) {
+        const product = await Product.findOne({ id: ev.productId }).lean();
+        if (product) rev += product.livePrice;
       }
     }
+    return rev;
   }
+
+  const totalRevenue = await calculateRevenue(purchaseEvents);
+  const prevRevenue = await calculateRevenue(prevPurchaseEvents);
+  const revenueChange = prevRevenue > 0 
+    ? parseFloat((((totalRevenue - prevRevenue) / prevRevenue) * 100).toFixed(1))
+    : (totalRevenue > 0 ? 100 : 0);
 
   // ── Conversion Rate by AB Variant ──────────────────────────────────────
   const sessions = await Session.find({}).lean();
@@ -104,6 +117,11 @@ export async function getDashboardMetrics() {
   // Overall AOV
   const overallAOV =
     purchaseEvents.length > 0 ? Math.round(totalRevenue / purchaseEvents.length) : 0;
+  const prevAOV = 
+    prevPurchaseEvents.length > 0 ? Math.round(prevRevenue / prevPurchaseEvents.length) : 0;
+  const aovChange = prevAOV > 0 
+    ? parseFloat((((overallAOV - prevAOV) / prevAOV) * 100).toFixed(1))
+    : (overallAOV > 0 ? 100 : 0);
 
   // ── Engagement & Intent Analytics ─────────────────────────────────────────
   const activeSessions = await Session.find({
@@ -118,6 +136,31 @@ export async function getDashboardMetrics() {
   const avgPurchaseIntent = activeSessions.length > 0
     ? parseFloat((activeSessions.reduce((s, sess) => s + (sess.purchaseIntentScore || 0), 0) / activeSessions.length).toFixed(3))
     : 0;
+
+  // Top products by purchase count (last 24h)
+  const topProductsAgg = await Event.aggregate([
+    { $match: { eventType: 'purchase', timestamp: { $gte: since24h } } },
+    { $group: { _id: '$productId', count: { $sum: 1 } } },
+    { $sort: { count: -1 } },
+    { $limit: 5 },
+    {
+      $lookup: {
+        from: 'products',
+        localField: '_id',
+        foreignField: 'id',
+        as: 'product',
+      },
+    },
+    { $unwind: '$product' },
+    {
+      $project: {
+        name: '$product.name',
+        sales: '$count',
+        revenue: { $multiply: ['$count', '$product.livePrice'] },
+      },
+    },
+  ]);
+  const topProducts = topProductsAgg;
 
   // Top categories by affinity across all active sessions
   const catAccum = {};
@@ -178,13 +221,13 @@ export async function getDashboardMetrics() {
   return {
     totalRevenue: {
       value: Math.round(totalRevenue),
-      change: purchaseEvents.length > 0 ? 12.4 : 0,
+      change: revenueChange,
     },
     conversionRate,
     avgOrderValue: {
       value: overallAOV,
       byVariant: avgOrderValue,
-      change: 8.1,
+      change: aovChange,
     },
     activeSessions: activeSessions.length,
     topProducts,

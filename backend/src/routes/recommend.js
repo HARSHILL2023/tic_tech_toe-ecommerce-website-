@@ -16,4 +16,17 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// GET /api/recommend/category?category=
+router.get('/category', async (req, res, next) => {
+  try {
+    const category = req.query.category;
+    const recommendations = await getRecommendations('anonymous', null, { 
+      timeCategories: [category] 
+    });
+    res.json(recommendations);
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

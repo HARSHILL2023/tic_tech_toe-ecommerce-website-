@@ -54,6 +54,7 @@ export async function trackEvent(
     const enriched: TrackEventMeta = {
       ...metadata,
       device: /Mobile|Android|iPhone/i.test(navigator.userAgent) ? "Mobile" : "Desktop",
+      referral: document.referrer || "direct",
       city: "India",
     };
     return await apiFetch(`${BASE_URL}/api/track`, {
@@ -72,6 +73,10 @@ export async function fetchRecommendations(sessionId: string, productId?: number
   return apiFetch(`${BASE_URL}/api/recommend?${params}`);
 }
 
+export async function fetchCategoryRecommendations(category: string) {
+  return apiFetch(`${BASE_URL}/api/recommend/category?category=${encodeURIComponent(category)}`);
+}
+
 // ── 5. A/B Variant ────────────────────────────────────────────────────────────
 export async function fetchABVariant(userId: string) {
   return apiFetch(`${BASE_URL}/api/ab/assign?user_id=${userId}`);
@@ -80,6 +85,14 @@ export async function fetchABVariant(userId: string) {
 // ── 6. Dashboard Metrics ─────────────────────────────────────────────────────
 export async function fetchDashboardMetrics() {
   return apiFetch(`${BASE_URL}/api/dashboard/metrics`);
+}
+
+export async function fetchLatencyMetrics() {
+  return apiFetch(`${BASE_URL}/api/dashboard/latency`);
+}
+
+export async function fetchInventoryPredictions() {
+  return apiFetch(`${BASE_URL}/api/prediction/inventory`);
 }
 
 export async function fetchFairnessAudit() {

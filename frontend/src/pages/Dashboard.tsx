@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Activity, TrendingUp, Trophy, DollarSign, ShoppingCart, Eye, Heart, Search, ShoppingBag, CheckCircle, Package, Store, AlertCircle } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts";
-import { connectLiveEvents, fetchDashboardMetrics, fetchMarketplaceHistory, fetchFairnessAudit } from "@/api";
+import { connectLiveEvents, fetchDashboardMetrics, fetchMarketplaceHistory, fetchFairnessAudit, fetchLatencyMetrics, fetchInventoryPredictions } from "@/api";
 
 interface DashboardMetrics {
   totalRevenue: { value: number; change: number };
@@ -22,6 +22,13 @@ interface DashboardMetrics {
   abSignificance?: { zScore: number | null; pValue: number | null; significant: boolean; note: string };
   segmentDistribution?: { value_seeker: number; standard: number; premium_intent: number };
   generatedAt?: string;
+  latency?: {
+    p50: number;
+    p99: number;
+    avg: number;
+    count: number;
+    quality: { ndcg: number; hitRate: number };
+  };
 }
 
 const EMPTY_METRICS: DashboardMetrics = {
@@ -36,6 +43,7 @@ const EMPTY_METRICS: DashboardMetrics = {
   topProducts: [],
   topQueries: [],
   recentEvents: [],
+  latency: { p50: 0, p99: 0, avg: 0, count: 0, quality: { ndcg: 0, hitRate: 0 } }
 };
 
 export default function Dashboard() {
@@ -48,7 +56,8 @@ export default function Dashboard() {
   const [marketplaceHistory, setMarketplaceHistory] = useState<MktProduct[]>([]);
   const [historyLoading, setHistoryLoading]         = useState(true);
 
-  // Fairness Audit Data
+  const [latency, setLatency] = useState<any>(null);
+  const [predictions, setPredictions] = useState<any[]>([]);
   const [fairness, setFairness] = useState<any>(null);
 
   const LINE_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#ec4899', '#eab308'];
@@ -57,8 +66,17 @@ export default function Dashboard() {
   useEffect(() => {
     const load = () => {
       fetchDashboardMetrics()
-        .then((data) => { setMetrics(data as DashboardMetrics); setMetricsLoading(false); })
+        .then((data) => { setMetrics(prev => ({ ...prev, ...(data as DashboardMetrics) })); setMetricsLoading(false); })
         .catch(() => setMetricsLoading(false));
+      
+      fetchLatencyMetrics()
+        .then(setLatency)
+        .catch(() => {});
+      
+      fetchInventoryPredictions()
+        .then(setPredictions)
+        .catch(() => {});
+
       fetchFairnessAudit().then(setFairness).catch(() => {});
     };
     load();
@@ -269,6 +287,64 @@ export default function Dashboard() {
             ) : (
               <span className="text-xs text-muted-foreground">Building profiles...</span>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Evaluation Metrics (NDCG, Hit Rate, P99 Latency) ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* P99 Latency */}
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">API Latency (p99)</span>
+            <Activity size={18} className="text-accent" />
+          </div>
+          <div className="flex items-end gap-2">
+            <p className="text-2xl font-bold text-card-foreground tabular-nums">
+              {metrics.latency?.p99 ?? "—"}
+            </p>
+            <span className="text-xs text-muted-foreground mb-1">ms</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground">based on last {metrics.latency?.count ?? 0} samples</p>
+        </div>
+
+        {/* NDCG@10 */}
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">Rec Quality (NDCG@10)</span>
+            <Trophy size={18} className="text-warning" />
+          </div>
+          <div className="flex items-end gap-2">
+            <p className="text-2xl font-bold text-card-foreground tabular-nums">
+              {metrics.latency?.quality?.ndcg ?? "—"}
+            </p>
+            <span className="text-xs text-muted-foreground mb-1">score</span>
+          </div>
+          <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-warning rounded-full" 
+              style={{ width: `${(metrics.latency?.quality?.ndcg ?? 0) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Hit Rate */}
+        <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide leading-snug">Recommendation Hit Rate</span>
+            <CheckCircle size={18} className="text-success" />
+          </div>
+          <div className="flex items-end gap-2">
+            <p className="text-2xl font-bold text-card-foreground tabular-nums">
+              {((metrics.latency?.quality?.hitRate ?? 0) * 100).toFixed(1)}%
+            </p>
+            <span className="text-xs text-muted-foreground mb-1">accuracy</span>
+          </div>
+          <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-success rounded-full" 
+              style={{ width: `${(metrics.latency?.quality?.hitRate ?? 0) * 100}%` }}
+            />
           </div>
         </div>
       </div>
@@ -565,8 +641,127 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          
+          <div className="mt-2 text-[10px] text-muted-foreground text-center">
+            Last Audited: {new Date(fairness.lastAudited).toLocaleString()} · PriceIQ Global Fairness Standard v2.4
+          </div>
         </div>
       )}
+
+      {/* ── Predictive Inventory & System Health (Phase 4) ── */}
+      <div className="space-y-6 pt-6 border-t border-border/40 pb-10">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-foreground">Operational Intelligence</h2>
+            <p className="text-sm text-muted-foreground">Predictive inventory alerts and ML system health</p>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent/10 border border-accent/20 text-accent text-xs font-semibold">
+            <Activity size={14} /> Real-time Monitoring Active
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          {/* Inventory Predictions */}
+          <div className="lg:col-span-3 rounded-xl border border-border bg-card overflow-hidden">
+            <div className="p-4 border-b border-border bg-muted/30">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Package size={16} className="text-warning" /> 
+                Inventory Stock-out Predictions
+              </h3>
+            </div>
+            <div className="p-0 overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/10 text-muted-foreground">
+                    <th className="px-4 py-3 font-medium">Product</th>
+                    <th className="px-4 py-3 font-medium">Daily Velocity</th>
+                    <th className="px-4 py-3 font-medium">Stock</th>
+                    <th className="px-4 py-3 font-medium">Est. Days to Zero</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {predictions.length > 0 ? predictions.slice(0, 5).map((p, i) => (
+                    <tr key={i} className="hover:bg-muted/5 transition-colors">
+                      <td className="px-4 py-3 font-medium text-foreground">{p.name}</td>
+                      <td className="px-4 py-3 tabular-nums">{p.dailyVelocity} units/day</td>
+                      <td className="px-4 py-3 tabular-nums">{p.currentStock}</td>
+                      <td className={`px-4 py-3 font-bold tabular-nums ${p.daysRemaining < 3 ? 'text-red-500' : 'text-warning'}`}>
+                        {p.daysRemaining} days
+                      </td>
+                      <td className="px-4 py-3">
+                        {p.critical ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 font-bold border border-red-500/20">
+                            <AlertCircle size={10} /> Critical
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-warning/10 text-warning font-bold border border-warning/20 text-[10px]">
+                            Stable
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground italic">
+                        Insufficient data for predictions...
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ML System Health Alerts */}
+          <div className="rounded-xl border border-border bg-card p-4 space-y-4 flex flex-col">
+            <h3 className="font-semibold text-sm flex items-center gap-2">
+              <Activity size={16} className="text-accent" />
+              Model Vital Signs
+            </h3>
+            
+            <div className="space-y-3 flex-1">
+              {/* Latency Health */}
+              <div className="p-3 rounded-lg border border-border bg-muted/20 space-y-2">
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <span>P99 Latency</span>
+                  <span className={latency?.p99 < 200 ? 'text-success' : 'text-warning'}>
+                    {latency?.p99 < 200 ? 'Healthy' : 'Degraded'}
+                  </span>
+                </div>
+                <div className="flex items-end gap-2">
+                  <span className="text-xl font-bold tabular-nums">{latency?.p99 ?? '—'}</span>
+                  <span className="text-[10px] text-muted-foreground mb-1">ms</span>
+                </div>
+              </div>
+
+              {/* Training Status */}
+              <div className="p-3 rounded-lg border border-border bg-muted/20 space-y-2">
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  <span>Model Updates</span>
+                  <span className="text-accent underline cursor-help">Throttled Trigger</span>
+                </div>
+                <div className="flex items-center gap-2 py-1">
+                  <div className="h-2 w-2 rounded-full bg-success animate-pulse" />
+                  <span className="text-xs font-semibold text-foreground">Models Active</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Auto-retrain threshold: 500 events</p>
+              </div>
+
+              {/* Quality Alert */}
+              {latency?.quality?.ndcg < 0.6 && latency?.quality?.ndcg > 0 && (
+                <div className="p-3 rounded-lg border border-warning/30 bg-warning/5 flex items-start gap-2">
+                  <AlertCircle size={14} className="text-warning mt-0.5" />
+                  <div>
+                    <p className="text-[10px] font-bold text-warning uppercase">Quality Alert</p>
+                    <p className="text-[10px] text-muted-foreground leading-tight">NDCG below target (0.6). Automated retrain pending more data.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

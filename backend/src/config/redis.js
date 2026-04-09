@@ -96,3 +96,8 @@ export async function redisGetInt(key) {
   const val = await redisGet(key);
   return val ? parseInt(val, 10) : 0;
 }
+
+export async function redisXAdd(stream, ...args) {
+  if (!redisAvailable || !redis) return;
+  try { await redis.xadd(stream, ...args); } catch { /* silent */ }
+}

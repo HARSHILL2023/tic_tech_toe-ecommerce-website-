@@ -1,9 +1,24 @@
-import { redisGetInt } from '../config/redis.js';
+import { redisGetInt, redisGet, redisSet } from '../config/redis.js';
+
+/**
+ * Fetch competitor price with 15-minute Redis caching.
+ * Real marketplace APIs are slow, so we cache a derived price.
+ */
+async function getCompetitorPrice(productId, basePrice) {
+  const cacheKey = `comp:price:${productId}`;
+  const cached = await redisGet(cacheKey);
+  if (cached) return parseFloat(cached);
+
+  // Simulated lookup: Competitors are typically 2-8% within our price
+  // For a "match" scenario, we target slightly below them.
+  const compPrice = basePrice * (0.95 + Math.random() * 0.1);
+  await redisSet(cacheKey, compPrice.toString(), 15 * 60); // 15 min TTL
+  return compPrice;
+}
 
 /**
  * Compute user segment from session object.
  * Uses ONLY non-discriminatory behavioral/commercial signals.
- * Excluded: gender, caste, religion, city, income bracket.
  */
 export function computeUserSegment(session = {}) {
   const eng = session.engagementScore || 0;
@@ -18,28 +33,28 @@ export function computeUserSegment(session = {}) {
 
 /**
  * Dynamic pricing engine.
- * @param {Object} product  - Mongoose product document (plain object)
- * @param {Object} sessionData - { abVariant, userSegment }
- * @param {Number} recentViews - views in last 15 min from Redis
- * @returns {{ price, reason, discount, userSegment }}
  */
-export function calculate(product, sessionData = {}, recentViews = 0) {
+export function calculate(product, sessionData = {}, recentViews = 0, competitorPrice = null) {
   let price = product.basePrice;
   let reason = 'Standard Price';
   const segment = sessionData.userSegment || 'standard';
 
-  // Rule 1 — Limited Stock
-  if (product.stock <= 5) {
-    price = price * 1.12; // +12% urgency
+  // Rule 1 — Inventory Scarcity vs Restock Timeline
+  const restockDays = product.restockDays || 7;
+  if (product.stock <= 3 && restockDays > 7) {
+    price = product.basePrice * 1.20; // +20% high scarcity
+    reason = 'Limited Stock';
+  } else if (product.stock <= 5) {
+    price = price * 1.12; 
     reason = 'Limited Stock';
   }
 
   // Rule 2 — High Demand (views in last 15 min)
   if (recentViews >= 30) {
-    price = price * 1.15; // +15% demand surge
+    price = Math.max(price, product.basePrice * 1.15);
     reason = 'High Demand';
   } else if (recentViews >= 15) {
-    price = price * 1.08; // +8%
+    price = Math.max(price, product.basePrice * 1.08);
     reason = 'High Demand';
   }
 
@@ -49,26 +64,27 @@ export function calculate(product, sessionData = {}, recentViews = 0) {
     reason = 'Standard Price';
   }
 
-  // Rule 4 — Competitor Match (every 5th product by id)
-  if (product.id % 5 === 0) {
-    price = price * 0.95; // -5% competitor match
-    reason = 'Competitor Match';
+  // Rule 4 — Competitor Price Match (Treatment only)
+  if (sessionData.abVariant !== 'control' && competitorPrice) {
+    const targetPrice = competitorPrice * 0.95; // 5% discount on competitor
+    if (targetPrice < price) {
+      price = targetPrice;
+      reason = 'Competitor Match';
+    }
   }
 
-  // Rule 5 — Low stock + high demand = max surge
-  if (product.stock <= 3 && recentViews >= 20) {
+  // Rule 5 — Behavioral Surge (Low stock + high demand)
+  if (product.stock <= 3 && recentViews >= 20 && sessionData.abVariant !== 'control') {
     price = product.basePrice * 1.22;
     reason = 'Limited Stock';
   }
 
-  // Rule 6 — User Willingness-to-Pay Segment (non-discriminatory behavioral signal)
-  if (segment === 'value_seeker' && sessionData.abVariant !== 'control') {
-    price = price * 0.97; // -3% for low-engagement / price-sensitive users
-    if (reason === 'Standard Price') reason = 'Standard Price';
+  // Rule 6 — User Willingness-to-Pay (Value Seeker fallback)
+  if (segment === 'value_seeker' && sessionData.abVariant !== 'control' && reason === 'Standard Price') {
+    price = price * 0.97;
   }
-  // premium_intent: no extra markup — we keep price fair
 
-  // Floor: never below 70% of MRP; Ceiling: never above 100% MRP
+  // Enforcement: Floor (70% MRP) | Ceiling (100% MRP)
   price = Math.max(price, product.mrp * 0.7);
   price = Math.min(price, product.mrp);
   price = Math.round(price);
@@ -79,10 +95,12 @@ export function calculate(product, sessionData = {}, recentViews = 0) {
 }
 
 /**
- * Convenience: get recentViews from Redis and calculate price.
+ * Convenience: get recentViews and competitorPrice then calculate.
  */
 export async function calculateWithRedis(product, sessionData = {}) {
-  const recentViews = await redisGetInt(`views:15m:${product.id}`);
-  return calculate(product, sessionData, recentViews);
+  const [recentViews, competitorPrice] = await Promise.all([
+    redisGetInt(`views:15m:${product.id}`),
+    getCompetitorPrice(product.id, product.basePrice)
+  ]);
+  return calculate(product, sessionData, recentViews, competitorPrice);
 }
-
