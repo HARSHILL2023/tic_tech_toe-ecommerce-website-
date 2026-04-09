@@ -3,10 +3,19 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()
+
 _client = None
 
 def get_db():
     global _client
     if _client is None:
-        _client = MongoClient(os.getenv("MONGO_URI"))
-    return _client["priceiq"]  # use same DB name as Node.js backend
+        mongo_uri = os.environ.get("MONGO_URI")
+        if not mongo_uri:
+            raise ValueError("MONGO_URI environment variable is not set!")
+        _client = MongoClient(
+            mongo_uri,
+            serverSelectionTimeoutMS=10000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=10000
+        )
+    return _client["priceiq"]
