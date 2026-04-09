@@ -87,7 +87,36 @@ async function getCoviewedProducts(productId) {
  *  5) Contextual cold-start (time-of-day categories)
  *  6) Random fill
  */
-export async function getRecommendations(sessionId, productId, context = {}) {
+export async function getRecommendations(sessionId, productId, context = {}, abVariant = 'control') {
+  // A/B: treatment variant uses ML service (GRU4Rec)
+  if (abVariant === 'treatment') {
+    try {
+      const sessionHistory = await redisLRange(`viewed:${sessionId}`, 0, 19);
+      if (sessionHistory.length >= 2) {
+        const mlRes = await fetch(
+          `${process.env.ML_SERVICE_URL || 'http://localhost:8000'}/recommend/session`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_history: sessionHistory, top_k: 8 }),
+            signal: AbortSignal.timeout(800)
+          }
+        );
+        if (mlRes.ok) {
+          const data = await mlRes.json();
+          if (data.recommendations?.length > 0) {
+            const products = await Product.find({ _id: { $in: data.recommendations } }).limit(8);
+            if (products.length > 0) {
+              return products.map(p => ({ ...p.toObject(), _recReason: `ml-${data.model || 'gru4rec'}` }));
+            }
+          }
+        }
+      }
+    } catch (mlErr) {
+      console.warn('ML rec failed, falling back:', mlErr.message);
+    }
+  }
+
   const all = await Product.find({}).lean();
   const current = all.find((p) => p.id === productId);
   const exclude = new Set([productId]);
